@@ -43,7 +43,7 @@ class Evasor(Node):
         self.velocidad_adelante = self.get_parameter('velocidad_adelante').value
         self.velocidad_angular = self.get_parameter('velocidad_angular').value
         self.angulo_giro_deg = self.get_parameter('angulo_giro_deg').value
-
+    
         self.publisher_ = self.create_publisher(Twist, 'cmd_vel', 10)
         # Publica una copia filtrada de /scan (mismos campos, pero con
         # infinito en todo lo que la máscara descarta) solo para poder
@@ -96,7 +96,6 @@ class Evasor(Node):
         objetivo de este workshop (es plomería de mensajes, no la máscara en
         sí), por eso viene resuelta."""
         scan = self.ultimo_scan
-        rangos_filtrados = np.where(mascara, np.array(scan.ranges), math.inf)
         msg = LaserScan()
         msg.header = scan.header
         msg.angle_min = scan.angle_min
@@ -106,7 +105,9 @@ class Evasor(Node):
         msg.scan_time = scan.scan_time
         msg.range_min = scan.range_min
         msg.range_max = scan.range_max
+        rangos_filtrados = np.where(mascara, np.array(scan.ranges), math.inf)
         msg.ranges = rangos_filtrados.tolist()
+
         self.publisher_scan_cono.publish(msg)
 
     def hay_obstaculo(self) -> bool:
@@ -133,6 +134,11 @@ class Evasor(Node):
              calibrados como pensás, antes de que el error se note como un
              giro raro del robot.
         """
+        if not self.ultimo_scan:
+            return False
+
+        self.ultima_medicion = np.array()
+
         pass
 
     def iniciar_giro(self):
@@ -150,6 +156,7 @@ class Evasor(Node):
         adelante, a velocidad_adelante (m/s)."""
         msg = Twist()
         # TODO: completar el campo de avance
+        msg.linear.x = self.velocidad_adelante
         return msg
 
     def girar(self) -> Twist:
@@ -157,6 +164,7 @@ class Evasor(Node):
         a velocidad_angular (rad/s)."""
         msg = Twist()
         # TODO: completar el campo de giro
+        msg.angular.z = self.velocidad_angular
         return msg
 
     def maquina_de_estados(self):
@@ -182,8 +190,12 @@ class Evasor(Node):
         # Transición de estados
 
         if self.estado == ESTADO_AVANZAR:
+            if self.hay_obstaculo():
+                self.estado = ESTADO_GIRAR
             pass
         if self.estado == ESTADO_GIRAR:
+            if not self.hay_obstaculo():# or self.angulo_girado() >= np.pi:
+                self.estado = ESTADO_AVANZAR
             pass
 
         

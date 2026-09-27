@@ -29,7 +29,7 @@ setup(
             # workshop te la damos como ayuda, pero cuando armes un nodo
             # propio de cero la vas a tener que escribir a mano vos:
             
-            # 'evasor = evasion_obstaculos.evasor:main',
+            'evasor = evasion_obstaculos.evasor:main',
         ],
     },
 )
