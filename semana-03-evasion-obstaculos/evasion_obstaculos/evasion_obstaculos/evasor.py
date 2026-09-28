@@ -8,6 +8,11 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 
+import sys
+import numpy
+numpy.set_printoptions(threshold=sys.maxsize)
+
+
 FRECUENCIA_HZ = 10.0
 
 ESTADO_AVANZAR = 0
@@ -68,7 +73,7 @@ class Evasor(Node):
         self.timer = self.create_timer(1.0 / FRECUENCIA_HZ, self.maquina_de_estados)
 
         self.ultimo_scan = None
-        self.yaw_actual = None
+        self.yaw_actual = 0.0
         self.estado = ESTADO_AVANZAR
         self.yaw_inicial_giro = 0.0
 
@@ -76,6 +81,7 @@ class Evasor(Node):
         self.ultimo_scan = msg
 
     def recibir_odom(self, msg: Odometry):
+        print("Recibiendo odometría")
         q = msg.pose.pose.orientation
         self.yaw_actual = math.atan2(
             2.0 * (q.w * q.z + q.x * q.y),
@@ -116,9 +122,9 @@ class Evasor(Node):
         dentro del cono frontal (angulo_frente_deg +/- angulo_vision_deg/2).
 
         Pasos sugeridos (con numpy, self.ultimo_scan es un LaserScan):
-          1. Si no llegó ningún scan, es decir es None, devolver False
-          2. Armar un array con el ángulo de cada medición
-          3. Restarle a cada ángulo el centro del cono y normalizar el
+          *1. Si no llegó ningún scan, es decir es None, devolver False
+          *2. Armar un array con el ángulo de cada medición
+          *3. Restarle a cada ángulo el centro del cono y normalizar el
              resultado al rango [-pi, pi] (podés usar self.normalizar_angulo,
              o hacerlo vectorizado)
           4. Armar una máscara para las mediciones que caen dentro del cono,
@@ -134,36 +140,74 @@ class Evasor(Node):
              calibrados como pensás, antes de que el error se note como un
              giro raro del robot.
         """
-        if not self.ultimo_scan:
+        if not self.ultimo_scan: # 1
             return False
 
-        self.ultima_medicion = np.array()
+        rango_m = np.asarray(self.ultimo_scan.ranges) # Vector de rango en metros
+        angulo_min = self.ultimo_scan.angle_min # Angulo minimo del scan
+        angulo_max = self.ultimo_scan.angle_max # Angulo maximo del scan
 
-        pass
+        angle_range = np.arange(
+            angulo_min, 
+            angulo_max, 
+            self.ultimo_scan.angle_increment
+        ) # 2
+        
+        # Restar el ángulo frontal a todos los elementos
+        angle_range -= np.deg2rad(self.angulo_frente_deg)
+
+        #normalized_angles = self.normalizar_angulo(angle_range) #3.1 Normalizar
+        normalized_angles = angle_range
+
+        cono_vision = np.zeros_like(normalized_angles, dtype=bool) # 4. Mascara vector de ceros
+        limite = np.deg2rad(self.angulo_vision_deg / 2) # Limite del cono de vision
+
+        cono_vision = (
+            (normalized_angles >= -limite) &
+            (normalized_angles <= limite)
+        )
+
+        cono_choque = np.zeros_like(normalized_angles, dtype=bool) # 4. Mascara vector de ceros
+
+        cono_choque = (
+            (rango_m <= self.distancia_choque_m)
+        )
+
+        mascara = cono_vision & cono_choque
+        
+        self.publicar_scan_filtrado(mascara) # 6. Publicar scan filtrado
+        
+        return np.any(mascara) # 5. Devolver True si hay al menos un obstaculo
 
     def iniciar_giro(self):
         """Guarda el yaw actual como referencia para saber, más adelante,
         cuánto giró realmente el robot (medido con la odometría)."""
         self.yaw_inicial_giro = self.yaw_actual
 
-    def angulo_girado(self) -> float:
+    def angulo_girado(self):
         """Cuánto giró el robot (en radianes, siempre positivo) desde que
         empezó el giro actual, según la odometría."""
-        return abs(self.normalizar_angulo(self.yaw_actual - self.yaw_inicial_giro))
+
+        if self.yaw_actual is None:
+            print("No se puede medir el ángulo girado, no hay odometría disponible.")
+            return None
+
+        if self.yaw_inicial_giro is None:
+            print("No se puede medir el ángulo inicial.")
+            return None
+
+        print("Yaw actual:", self.yaw_actual)
+        print("Yaw inicial giro:", self.yaw_inicial_giro)
+
+        return self.yaw_actual - self.yaw_inicial_giro
 
     def avanzar(self) -> Twist:
-        """TODO: devolver un Twist que mueva el robot derecho hacia
-        adelante, a velocidad_adelante (m/s)."""
         msg = Twist()
-        # TODO: completar el campo de avance
         msg.linear.x = self.velocidad_adelante
         return msg
 
     def girar(self) -> Twist:
-        """TODO: igual que avanzar(), pero para girar en el lugar,
-        a velocidad_angular (rad/s)."""
         msg = Twist()
-        # TODO: completar el campo de giro
         msg.angular.z = self.velocidad_angular
         return msg
 
@@ -192,19 +236,36 @@ class Evasor(Node):
         if self.estado == ESTADO_AVANZAR:
             if self.hay_obstaculo():
                 self.estado = ESTADO_GIRAR
-            pass
+                self.iniciar_giro() # Guardar referencia del girado
+                print("Transición a GIRAR")
         if self.estado == ESTADO_GIRAR:
-            if not self.hay_obstaculo():# or self.angulo_girado() >= np.pi:
+
+            if(self.angulo_girado() is None):
+                print("No se puede medir el ángulo girado, no hay odometría disponible.")
+                return
+
+            print(f"Ángulo girado: {self.angulo_girado():.2f} rad, objetivo: {np.deg2rad(self.angulo_giro_deg):.2f} rad")
+            giro_suficiente = (
+                self.angulo_girado()
+                >= abs(
+                    self.normalizar_angulo(
+                        np.deg2rad(self.angulo_giro_deg)
+                    )
+                )
+            )         
+
+            if giro_suficiente:
                 self.estado = ESTADO_AVANZAR
-            pass
+                print("Transición a AVANZAR")
 
         
         # Acción según el estado
-        
         if self.estado == ESTADO_AVANZAR:
             msg = self.avanzar()
+            print("Estado AVANZAR: avanzando")
         elif self.estado == ESTADO_GIRAR:
             msg = self.girar()
+            print("Estado GIRAR: girando")
 
         self.publisher_.publish(msg)
 
