@@ -199,7 +199,7 @@ class Evasor(Node):
         print("Yaw actual:", self.yaw_actual)
         print("Yaw inicial giro:", self.yaw_inicial_giro)
 
-        return self.yaw_actual - self.yaw_inicial_giro
+        return abs(self.normalizar_angulo(self.yaw_actual - self.yaw_inicial_giro))
 
     def avanzar(self) -> Twist:
         msg = Twist()
