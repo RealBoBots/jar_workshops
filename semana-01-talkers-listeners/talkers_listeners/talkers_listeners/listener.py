@@ -12,9 +12,9 @@ class Listener(Node):
         # Cola de 10, igual que el publisher del talker.
         # Descomentá las siguientes líneas:
         
-        # self.subscription = self.create_subscription(
-        #     String, 'mensaje', self.recibir, 10
-        # )
+        self.subscription = self.create_subscription(
+            String, 'mensaje', self.recibir, 10
+        )
         pass
 
     def recibir(self, msg: String):
